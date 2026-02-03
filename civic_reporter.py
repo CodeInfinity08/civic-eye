@@ -13,7 +13,15 @@ st.set_page_config(page_title="Civic Issue Reporter", page_icon="🏙️")
 
 # --- Sidebar for API Key ---
 st.sidebar.header("Configuration")
-api_key = st.sidebar.text_input("Enter Google Gemini API Key", type="password")
+try:
+    api_key = st.secrets["GOOGLE_API_KEY"]
+except:
+    # Fallback if running locally without secrets file
+    api_key = st.text_input("Enter API Key (or set up secrets.toml)")
+
+# Configure Gemini
+if api_key:
+    genai.configure(api_key=api_key)
 
 # --- Main App Interface ---
 st.title("🏙️ Civic Issue Reporter")
@@ -92,4 +100,5 @@ if uploaded_file is not None:
                     st.balloons()
                     
                     # (Optional) Log the data here to a database or CSV
+
                     # print(f"Logging: {analysis_result}")
