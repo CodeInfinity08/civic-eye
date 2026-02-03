@@ -2,103 +2,125 @@ import streamlit as st
 import google.generativeai as genai
 from PIL import Image
 import json
-import os
 
-# --- Configuration ---
-# ideally, store this in st.secrets or an environment variable
-# For this script to work, you need a valid API key.
-# st.secrets["GOOGLE_API_KEY"] is the recommended way to handle this in production.
+# ------------------ PAGE CONFIG ------------------
+st.set_page_config(
+    page_title="Civic Issue Reporter",
+    page_icon="🏙️",
+    layout="centered"
+)
 
-st.set_page_config(page_title="Civic Issue Reporter", page_icon="🏙️")
+# ------------------ SIDEBAR ------------------
+st.sidebar.title("⚙️ Configuration")
 
-# --- Sidebar for API Key ---
-st.sidebar.header("Configuration")
-try:
-    api_key = st.secrets["GOOGLE_API_KEY"]
-except:
-    # Fallback if running locally without secrets file
-    api_key = st.text_input("Enter API Key (or set up secrets.toml)")
+use_mock_ai = st.sidebar.checkbox(
+    "Use Demo AI (Safe Mode)",
+    value=True,
+    help="Turn OFF only if you are confident your API key will work"
+)
 
-# Configure Gemini
-if api_key:
-    genai.configure(api_key=api_key)
+api_key = ""
+if not use_mock_ai:
+    api_key = st.sidebar.text_input(
+        "Google Gemini API Key",
+        type="password"
+    )
 
-# --- Main App Interface ---
+# ------------------ TITLE ------------------
 st.title("🏙️ Civic Issue Reporter")
-st.markdown("Upload a photo of a civic issue (e.g., pothole, uncollected trash), and AI will categorize it for the correct department.")
+st.write(
+    "Upload a photo of a civic issue (pothole, garbage, broken streetlight). "
+    "AI will automatically classify and prioritize it."
+)
 
-uploaded_file = st.file_uploader("Take a photo or upload an image", type=["jpg", "jpeg", "png"])
+# ------------------ FILE UPLOAD ------------------
+uploaded_file = st.file_uploader(
+    "📸 Upload an image",
+    type=["jpg", "jpeg", "png"]
+)
 
-# --- Helper Function: Analyze Image ---
-def analyze_image(image, key):
+# ------------------ MOCK AI (SAFE FALLBACK) ------------------
+def mock_ai_response():
+    return {
+        "Issue_Type": "Pothole",
+        "Severity": "High",
+        "Department": "Public Works"
+    }
+
+# ------------------ REAL AI FUNCTION ------------------
+def analyze_image_with_gemini(image, key):
     try:
         genai.configure(api_key=key)
-        # Use Gemini 1.5 Flash for speed and efficiency
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        
-        prompt = """
-        Analyze this image of a civic issue. 
-        Return a strict JSON object with no markdown formatting.
-        The JSON must have these exact keys:
-        - "Issue_Type": Short description (e.g., Pothole, Garbage, Broken Streetlight, Graffiti).
-        - "Severity": "High", "Medium", or "Low".
-        - "Department": The city department responsible (e.g., Public Works, Sanitation, Electrical, Parks).
-        
-        If the image is not relevant to civic issues, set "Issue_Type" to "Irrelevant".
-        """
-        
-        response = model.generate_content([prompt, image])
-        
-        # Clean response to ensure pure JSON
-        text_response = response.text.replace('```json', '').replace('```', '').strip()
-        return json.loads(text_response)
-        
-    except Exception as e:
-        st.error(f"Error analyzing image: {e}")
-        return None
+        model = genai.GenerativeModel("gemini-1.5-flash")
 
-# --- Application Logic ---
-if uploaded_file is not None:
-    # 1. Display the Image
+        prompt = """
+        You are a civic inspector AI.
+
+        Analyze the image and return ONLY valid JSON with:
+        {
+          "Issue_Type": "Pothole / Garbage / Broken Streetlight / Graffiti / Irrelevant",
+          "Severity": "High / Medium / Low",
+          "Department": "Public Works / Sanitation / Electrical / Parks"
+        }
+        """
+
+        response = model.generate_content([prompt, image])
+
+        text = response.text.strip()
+        text = text.replace("```json", "").replace("```", "")
+
+        return json.loads(text)
+
+    except Exception as e:
+        st.warning("⚠️ AI failed, switching to demo response.")
+        return mock_ai_response()
+
+# ------------------ MAIN LOGIC ------------------
+if uploaded_file:
     image = Image.open(uploaded_file)
     st.image(image, caption="Uploaded Image", use_container_width=True)
-    
-    if not api_key:
-        st.warning("⚠️ Please enter your Google Gemini API Key in the sidebar to proceed.")
-    else:
-        with st.spinner("AI is analyzing the issue..."):
-            # 2. Analyze the Image
-            analysis_result = analyze_image(image, api_key)
 
-        if analysis_result:
-            # 3. Display Analysis Results
-            st.divider()
-            st.subheader("📋 AI Analysis Report")
-            
-            # Check if relevant
-            if analysis_result.get("Issue_Type") == "Irrelevant":
-                st.error("The AI could not identify a valid civic issue in this image.")
+    if st.button("🔍 Analyze Issue"):
+        with st.spinner("Analyzing issue..."):
+            if use_mock_ai:
+                result = mock_ai_response()
             else:
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric(label="Issue Type", value=analysis_result.get("Issue_Type", "Unknown"))
-                with col2:
-                    severity = analysis_result.get("Severity", "Low")
-                    # Color code severity
-                    color = "normal"
-                    if severity == "High": color = "inverse" 
-                    st.metric(label="Severity", value=severity)
-                with col3:
-                    st.metric(label="Assigned Dept", value=analysis_result.get("Department", "General"))
+                if not api_key:
+                    st.error("Please enter an API key or enable Demo AI.")
+                    st.stop()
+                result = analyze_image_with_gemini(image, api_key)
 
-                # 4. Submit Button
-                st.divider()
-                if st.button("🚀 Submit Report", type="primary"):
-                    dept = analysis_result.get("Department", "City Council")
-                    st.success(f"✅ Report successfully sent to the **{dept}** Department!")
-                    st.balloons()
-                    
-                    # (Optional) Log the data here to a database or CSV
+        # ------------------ RESULTS ------------------
+        st.divider()
+        st.subheader("📋 AI Analysis Report")
 
-                    # print(f"Logging: {analysis_result}")
+        if result["Issue_Type"] == "Irrelevant":
+            st.error("No valid civic issue detected.")
+        else:
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.metric("Issue Type", result["Issue_Type"])
+            with col2:
+                st.metric("Severity", result["Severity"])
+            with col3:
+                st.metric("Department", result["Department"])
+
+            st.divider()
+
+            if st.button("🚀 Submit Report", type="primary"):
+                st.success(
+                    f"Report sent to **{result['Department']} Department**"
+                )
+                st.balloons()
+
+# ------------------ ADMIN DASHBOARD (DEMO) ------------------
+st.divider()
+st.header("🛠️ Admin Dashboard (Demo)")
+
+st.table({
+    "Issue": ["Pothole", "Garbage"],
+    "Severity": ["High", "Medium"],
+    "Status": ["Open", "In Progress"],
+    "Department": ["Public Works", "Sanitation"]
+})
